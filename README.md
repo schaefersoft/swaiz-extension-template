@@ -1,7 +1,7 @@
 # swaiz-extension-template
 
 Template for a **swaiz extension** — an add-on that
-[`aictl`](https://github.com/schaefersoft/swaiz-cli) installs on top of the swaiz
+`aictl` installs on top of the swaiz
 platform. One extension per repository, built and released with
 [`swaiz-extension-kit`](https://github.com/schaefersoft/swaiz-extension-kit).
 
