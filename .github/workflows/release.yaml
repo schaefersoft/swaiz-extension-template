@@ -12,6 +12,6 @@ concurrency: release
 
 jobs:
   release:
-    if: github.repository != 'schaefersoft/swaiz-extension-template'
+    if: github.repository != 'schaefersoft/swaiz-extension-template' && github.ref_name == 'release' && !github.event.created
     uses: schaefersoft/swaiz-extension-kit/.github/workflows/extension-release.yaml@v1
     secrets: inherit
