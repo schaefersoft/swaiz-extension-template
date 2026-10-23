@@ -9,6 +9,10 @@ The manifest here is the documented **reference** of everything an extension can
 contribute (`apiVersion: aictl.io/v2`). Start from it and trim what you don't
 need.
 
+The full workflow is in the developer handbook:
+[Aufbau und Release](https://swaiz.ch/docs/entwickler/structure-and-release) and
+[Lokal entwickeln](https://swaiz.ch/docs/entwickler/local-development).
+
 ## Start a new extension
 
 Install the tools first — see
@@ -66,9 +70,10 @@ GitHub copies files from a template, not settings. Set them once:
 
 ### 4. Register it with the distribution server
 
-The server only pulls releases from repositories it knows. Linking the
-repository to the extension is an internal step of the platform team — ask
-them before the first release.
+The server only pulls releases from repositories it knows. Create the extension
+in the customer portal under *Erweiterungen* and link it to this repository
+through your company's GitHub connection, see
+[Aufbau und Release](https://swaiz.ch/docs/entwickler/structure-and-release#release-ablauf).
 
 ### 5. Release
 
@@ -121,12 +126,12 @@ aictl extension lint .                   # manifest validation, offline
 bash check.sh                            # the extension's own checks
 swaiz-ext-build-images .                 # own service images → images/
 swaiz-ext-build .                        # → dist/dl/extensions/<name>/<version>/
-(cd dist && python3 -m http.server 8080) # serve the /dl tree like the real server
 ```
 
-In a dev aictl install, set `license.serverURL: http://localhost:8080`, then
-`aictl extension install <name>`. A locally built bundle is **unsigned**, so a
-release `aictl` refuses it — local testing needs a `-tags dev` build.
+A locally built bundle is **unsigned**, and every `aictl` refuses it, dev builds
+included. The real install flow is tested with a server-signed pre-release on a
+test installation, see
+[Lokal entwickeln](https://swaiz.ch/docs/entwickler/local-development#testrelease-auf-einer-testinstallation).
 
 ## Rules that matter
 
