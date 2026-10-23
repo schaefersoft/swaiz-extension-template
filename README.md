@@ -103,3 +103,8 @@ release `aictl` refuses it — local testing needs a `-tags dev` build.
 - **Dependabot** watches the GitHub Actions only. Add the `composer`, `npm`,
   `gomod` or `docker` ecosystems for your `services/` directories in
   `.github/dependabot.yml` once they exist.
+
+## License
+
+MIT-0 — see [LICENSE](LICENSE). Use the template for your own extension, open
+or proprietary, without carrying a notice along.
