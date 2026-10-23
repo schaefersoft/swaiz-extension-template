@@ -9,7 +9,8 @@ The manifest here is the documented **reference** of everything an extension can
 contribute (`apiVersion: aictl.io/v2`). Start from it and trim what you don't
 need.
 
-The full workflow is in the developer handbook:
+The full workflow is in the developer handbook (needs an account in the
+customer portal):
 [Aufbau und Release](https://swaiz.ch/docs/entwickler/structure-and-release) and
 [Lokal entwickeln](https://swaiz.ch/docs/entwickler/local-development).
 
@@ -22,14 +23,15 @@ in the kit.
 ### 1. Create the repository
 
 ```sh
-gh repo create schaefersoft/swaiz-<name> --private \
+gh repo create <owner>/<repository> --private \
   --template schaefersoft/swaiz-extension-template --clone
-cd swaiz-<name>
+cd <repository>
 git switch -c dev && git push -u origin dev
 ```
 
 `release` is the default branch; every push to it that changed the extension
-produces a release. Work happens on `dev`.
+produces a release. Work happens on `dev`. The commit that creates the repository
+does not release anything.
 
 ### 2. Make it yours
 
@@ -47,13 +49,16 @@ produces a release. Work happens on `dev`.
 
 GitHub copies files from a template, not settings. Set them once:
 
-- **General:** turn off the wiki, turn on *Automatically delete head branches*.
+- **General:** turn off the wiki, turn on *Automatically delete head branches*,
+  and allow merge commits only (no squash or rebase merging): `dev` is merged
+  into `release` with a merge commit, because the version bumps live on
+  `release` only.
 - **Rulesets** (public repositories; private ones need a paid plan): protect
   `release` and `dev` against deletion and force pushes.
 
   ```sh
   for b in release dev; do
-    gh api -X POST repos/schaefersoft/swaiz-<name>/rulesets --input - <<JSON
+    gh api -X POST repos/<owner>/<repository>/rulesets --input - <<JSON
   {"name":"$b","target":"branch","enforcement":"active",
    "conditions":{"ref_name":{"include":["refs/heads/$b"],"exclude":[]}},
    "rules":[{"type":"deletion"},{"type":"non_fast_forward"}]}
@@ -64,7 +69,7 @@ GitHub copies files from a template, not settings. Set them once:
   Do **not** require pull requests or status checks on `release`: the release
   workflow pushes its version bump there directly and would be rejected.
 - **Security:** Dependabot alerts on
-  (`gh api -X PUT repos/schaefersoft/swaiz-<name>/vulnerability-alerts`); for a
+  (`gh api -X PUT repos/<owner>/<repository>/vulnerability-alerts`); for a
   public repository also secret scanning and push protection (*Settings → Code
   security*).
 
@@ -82,7 +87,9 @@ Merge `dev` into `release`. The release workflow lints the manifest, runs
 `release`, tags `<name>/v<version>` and publishes a GitHub Release. The
 distribution server picks it up within about a minute and signs it; from then
 on `aictl extension install <name>` works for licenses entitled to the
-extension.
+extension. An installation only learns about a new extension with its next
+license renewal; run `sudo aictl license renew` there before the first
+install.
 
 The version bump lands on `release` only. `version:` on `dev` therefore stays
 behind — the released version is the newest `<name>/v*` tag
