@@ -11,6 +11,12 @@ need.
 
 ## Start a new extension
 
+Install the tools first — see
+[Prerequisites](https://github.com/schaefersoft/swaiz-extension-kit#prerequisites)
+in the kit.
+
+### 1. Create the repository
+
 ```sh
 gh repo create schaefersoft/swaiz-<name> --private \
   --template schaefersoft/swaiz-extension-template --clone
@@ -18,7 +24,10 @@ cd swaiz-<name>
 git switch -c dev && git push -u origin dev
 ```
 
-Then:
+`release` is the default branch; every push to it that changed the extension
+produces a release. Work happens on `dev`.
+
+### 2. Make it yours
 
 1. In `extension.yaml` set `name:` (lowercase, dashes; it becomes the spec key,
    the download path and the tag prefix), `displayName:`, `description:` and
@@ -27,11 +36,53 @@ Then:
 2. Delete the hooks and the n8n workflow unless you need them.
 3. Write the user documentation in `.docs/` (see below).
 4. Add a `check.sh` as soon as there is anything to test.
-5. On the distribution server, link the extension to this repository and give
-   the GitHub App access to it — the server pulls releases from there.
+5. Add the `composer`, `npm`, `gomod` or `docker` ecosystems for your
+   `services/` directories to `.github/dependabot.yml`.
 
-Work on `dev`, open pull requests against `release`. Every push to `release`
-that changed the extension produces a release.
+### 3. Repository settings
+
+GitHub copies files from a template, not settings. Set them once:
+
+- **General:** turn off the wiki, turn on *Automatically delete head branches*.
+- **Rulesets** (public repositories; private ones need a paid plan): protect
+  `release` and `dev` against deletion and force pushes.
+
+  ```sh
+  for b in release dev; do
+    gh api -X POST repos/schaefersoft/swaiz-<name>/rulesets --input - <<JSON
+  {"name":"$b","target":"branch","enforcement":"active",
+   "conditions":{"ref_name":{"include":["refs/heads/$b"],"exclude":[]}},
+   "rules":[{"type":"deletion"},{"type":"non_fast_forward"}]}
+  JSON
+  done
+  ```
+
+  Do **not** require pull requests or status checks on `release`: the release
+  workflow pushes its version bump there directly and would be rejected.
+- **Security:** Dependabot alerts on
+  (`gh api -X PUT repos/schaefersoft/swaiz-<name>/vulnerability-alerts`); for a
+  public repository also secret scanning and push protection (*Settings → Code
+  security*).
+
+### 4. Register it with the distribution server
+
+The server only pulls releases from repositories it knows. Linking the
+repository to the extension is an internal step of the platform team — ask
+them before the first release.
+
+### 5. Release
+
+Merge `dev` into `release`. The release workflow lints the manifest, runs
+`check.sh`, builds the bundle and images, commits the version bump to
+`release`, tags `<name>/v<version>` and publishes a GitHub Release. The
+distribution server picks it up within about a minute and signs it; from then
+on `aictl extension install <name>` works for licenses entitled to the
+extension.
+
+The version bump lands on `release` only. `version:` on `dev` therefore stays
+behind — the released version is the newest `<name>/v*` tag
+(`git tag -l '<name>/v*' --sort=-v:refname | head -1`). After the first release,
+never change `version:` by hand; the commits decide.
 
 ## What's inside
 
