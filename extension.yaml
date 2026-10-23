@@ -1,0 +1,351 @@
+# example — reference extension manifest (apiVersion aictl.io/v2).
+#
+# This repository is a TEMPLATE, not a shipped extension: its release workflow
+# never runs here. Create a repository from it, then edit and trim.
+#
+# An extension turns the generic base stack into a ready-to-use solution. It can
+# contribute models (served via the LiteLLM router), Postgres databases, its own
+# SERVICES (containers routed by Traefik), one-off JOBS (migrations, restore
+# repair, cron), host-side lifecycle HOOKS, a declaration of the STATE it owns
+# outside its volumes, and n8n workflows. Everything is reconciled idempotently —
+# install AND every update re-apply it.
+#
+# Already-published aictl.io/v1 bundles stay installable forever (aictl selects
+# the parser by apiVersion); this template documents only v2. The one idea that
+# replaces v1's aictlEnv/parameters/needs trio: a service declares EVERYTHING it
+# depends on in a single `needs` map — see the services section.
+
+# --- schema + identity (required) ------------------------------------------
+apiVersion: aictl.io/v2       # manifest grammar; absent would mean v1
+kind: Extension
+name: example                 # lowercase letters/digits/dashes; spec key, download path and tag prefix
+version: 0.1.0                # semver — swaiz-ext-release bumps it automatically from Conventional Commits
+
+# --- metadata (optional) ---------------------------------------------------
+displayName: Beispiel-Extension
+description: >-
+  Referenzmanifest für apiVersion aictl.io/v2: Modelle, Datenbanken, Secrets,
+  eigene Dienste, Jobs, Hooks und der Zustand, den die Extension ausserhalb
+  ihrer eigenen Volumes besitzt.
+vendor: schaefersoft
+# platform is the aictl release this manifest needs (the successor of v1's
+# minAictlVersion): the reconciler refuses to provision on an older binary,
+# before anything is created, and names the required version.
+platform: "0.41.0"
+# deprecated marks an extension its vendor no longer develops. It keeps
+# installing and running; `extension install` warns the operator once.
+deprecated: false
+
+# --- what it requires ------------------------------------------------------
+requires:
+  # Free disk the extension needs on the data volume (images, model weights,
+  # payload). Checked BEFORE anything is downloaded — a full disk takes down
+  # Postgres with symptoms that point everywhere except at the disk.
+  # Docker-style units: k/m/g/t (binary).
+  disk: 25g
+
+  # Models are ALWAYS served through the LiteLLM router — nothing accesses a
+  # model directly. `name` is the extension's own alias for the role (what a
+  # service references in `needs: litellm: models:`); `model` is the Ollama tag
+  # aictl pulls and the router id a service calls (injected as
+  # AICTL_MODEL_<ALIAS>). `type` decides what the install does with it:
+  #   required     pulled automatically; a failure fails the install  (default)
+  #   recommended  offered as a yes/no choice during `extension install` (a
+  #                headless install takes the default: yes, a pull failure
+  #                only warns). The answer is saved in the spec, so updates
+  #                and reconciles never re-ask.
+  #   optional     never pulled — the install just points it out as a
+  #                possibility (`aictl model install <tag>` adds it any time)
+  #                and the app copes with its absence
+  models:
+    - name: chat
+      model: mistral-small3.2
+      description: Fasst die Inhalte zusammen
+      type: recommended
+    - name: embed
+      model: bge-m3
+      description: Embedding-Modell für die semantische Suche
+      type: required
+    - name: rerank
+      model: bge-reranker-v2-m3
+      description: Sortiert Suchergebnisse nach; fehlt es, gilt die Vorsortierung
+      type: optional
+
+  # Postgres databases created in the shared instance, each owned by a
+  # dedicated per-extension role whose password aictl generates. There are NO
+  # manifest-side migrations in v2 — the schema belongs to the application
+  # (run it from a preStart job below). `extensions` lists Postgres extensions
+  # aictl creates as superuser INSIDE the database, so the app's migrations
+  # never need a privileged statement.
+  databases:
+    - name: example
+      description: Fachdaten der Extension
+      extensions: [pg_trgm, unaccent]
+    - name: statistics
+      description: Auswertungen der Verarbeitungen
+
+  # Secrets are declared by the ENV-VAR NAME they arrive under (the AICTL_
+  # prefix is reserved and rejected). A service receives one by listing it in
+  # `envSecrets`. `type` decides who supplies the value:
+  #   required   asked for during `extension install` (masked prompt, preceded
+  #              by the description and `docs:` link — nobody has to search
+  #              where a value comes from). Esc aborts the install; a headless
+  #              install fails closed instead, naming the missing keys and the
+  #              `aictl secret set <NAME>` command for each.
+  #   optional   asked for during the install too, but Esc SKIPS it; unset it
+  #              arrives as an empty string and the extension runs without the
+  #              feature (`aictl secret set` adds it any time).
+  #   generated  aictl invents it once and injects the SAME value into every
+  #              service that lists it — for the extension's own internal
+  #              auth (an app calling its unrouted sidecar). Survives
+  #              `extension remove`, so a reinstall keeps reaching its data.
+  secrets:
+    - name: EXAMPLE_HF_TOKEN
+      description: HuggingFace-Token für den einmaligen Modell-Download
+      type: required
+      docs: https://huggingface.co/pyannote/speaker-diarization-community-1
+    - name: EXAMPLE_MAILBOX_PASSWORD
+      description: Postfach-Passwort für den Mail-Abruf; ohne bleibt er aus
+      type: optional
+    - name: EXAMPLE_ASR_TOKEN
+      description: Bearer, mit dem app und worker den asr-Dienst aufrufen
+      type: generated
+
+# A YAML anchor holds what sibling services sharing one image also share. An
+# `x-` key is not a manifest field: YAML resolves `<<: *app-base` before aictl
+# sees the document. NOTE the merge is SHALLOW — a service that writes its own
+# `envSecrets` (or `env`, `volumes`, …) REPLACES the inherited value, it does
+# not extend it. Keep `needs` out of the anchor: it differs per service, and
+# spelling it out is what makes each container's reach reviewable.
+x-app-base: &app-base
+  # An image built in this repo (services/<svc>/Dockerfile): swaiz-ext-build-images
+  # tags it <name>-<svc>:<version>, ships it as a signed tarball with the
+  # bundle, and aictl `docker load`s it at install — no registry involved.
+  # `${version}` is replaced with the manifest's version when aictl parses the
+  # file, so a release bumps ONE line instead of retagging every image ref.
+  image: example-app:${version}
+  # The service's own non-secret values, verbatim. AICTL_* keys are rejected
+  # here — nothing aictl injects can be shadowed.
+  env:
+    ASR_URL: "http://asr:9000"
+  envSecrets: [EXAMPLE_ASR_TOKEN]
+  volumes:
+    # Named, persistent, namespaced per extension; kept on `extension remove`,
+    # wiped by full uninstall or `extension remove --purge`.
+    - { name: data, path: /data }
+
+# Services: the extension's own containers. aictl renders a per-extension
+# compose project and routes each service via Traefik; extensions MUST NOT
+# bind host ports — ingress is via `route:` only.
+#
+# EVERYTHING a service depends on is declared in ONE place: its `needs` map.
+# Each key names a core service, a platform capability or a SIBLING service of
+# this manifest; an entry brings the whole relationship — the network grant,
+# the readiness wait AND every injected variable — while its value configures
+# only the relationship itself. A need that is not declared is not granted:
+# there is no network path and no credential, fail-closed. What each key
+# injects (names only; `aictl extension env <name>` prints the live list):
+#
+#   postgres   AICTL_DB_HOST/PORT/NAME/USER/PASSWORD/URL per entry in
+#              `databases:`; an entry with `as: stats` gets the same six as
+#              AICTL_DB_STATS_*. At most one entry may omit `as`.
+#   litellm    AICTL_LITELLM_URL + AICTL_LITELLM_KEY (a router key aictl mints
+#              and registers), plus AICTL_MODEL_<ALIAS> = router model id for
+#              every alias in `models:`.
+#   qdrant     AICTL_QDRANT_URL + AICTL_QDRANT_API_KEY — the vector store's
+#              gateway and this extension's own key; send it as header
+#              `api-key`. It opens only collections matching a `state` qdrant
+#              selector (which must start with "<name>_"; default <name>_*).
+#   n8n        AICTL_N8N_URL      (opt-in network, like qdrant)
+#   searxng    AICTL_SEARXNG_URL  (opt-in network, like qdrant)
+#   oidc       AICTL_OIDC_* + AICTL_PUBLIC_URL — a real login against the
+#              platform identity provider. Needs a `route` (a login needs a
+#              public address to come back to); `callbackPath` is registered
+#              as the ONE permitted redirect URI. Also injects
+#              AICTL_OIDC_API_TOKEN: the service's own read-only authentik
+#              API token (service account; view groups/users), for group
+#              pickers and the user directory — against AICTL_OIDC_BASE_URL
+#              under /api/v3/.
+#   brand      AICTL_BRAND_NAME/LOGO/FAVICON — the customer's identity. Logo
+#              and favicon are PATHS to read-only mounted files, not URLs.
+#   toolauth   AICTL_TOOL_JWT_SECRET — verifies the signed identity that
+#              comes with a tool call from the platform chat. Required
+#              alongside `toolServer`.
+#   <sibling>  a service of THIS manifest: start-ordering via depends_on
+#              (service_healthy when the sibling declares `health`, else
+#              service_started). Takes no configuration; its own wiring stays
+#              visible in `env`/`envSecrets` (see ASR_URL above).
+#
+# Beside the needs, EVERY service always receives AICTL_EXTENSION_NAME,
+# AICTL_EXTENSION_VERSION and AICTL_EXTENSION_LIST.
+services:
+  app:
+    <<: *app-base
+    needs:
+      postgres:
+        databases: [{ name: example }, { name: statistics, as: stats }]
+      litellm: { models: [chat, embed, rerank] }
+      qdrant: {}
+      oidc: { callbackPath: /auth/oidc/callback }
+      brand: {}
+      toolauth: {}
+      asr: {}
+    # envSecrets REPLACES the anchor's list (shallow merge!) — repeat what the
+    # anchor had. EXAMPLE_MAILBOX_PASSWORD is optional: unset it arrives empty
+    # and the app leaves the mailbox feature off.
+    envSecrets: [EXAMPLE_ASR_TOKEN, EXAMPLE_MAILBOX_PASSWORD]
+    expose: [8080]              # internal port(s) only
+    # A manifest health probe becomes the container's compose healthcheck; it
+    # gates the readiness wait, the depends_on of siblings and the moment the
+    # public route is published (a down service never gets a route → no 502s).
+    # httpGet needs curl OR wget in the image; exec runs a command instead.
+    health: { httpGet: /healthz, port: 8080 }
+    route:
+      # → example.<baseDomain>. A multi-level subdomain (api.example) works
+      # too, but needs its own DNS record and an exact (non-wildcard) cert.
+      subdomain: example
+      port: 8080
+      # Optional per-route limits at the proxy: maxBodySize caps the request
+      # body (uploads), timeout is how long Traefik waits for the backend's
+      # response headers (long-running processing). Omit both to keep the
+      # platform defaults and full streaming.
+      maxBodySize: 1100m
+      timeout: 900s
+    # An OpenAPI tool surface for the platform chat. aictl registers it in
+    # OpenWebUI on reconcile — no manual admin step. Needs `route` (the chat
+    # calls it over the PUBLIC url) and the `toolauth` need above (without the
+    # shared secret the service fails every call closed).
+    toolServer:
+      path: /api/tools/openapi.json
+      name: Beispiel
+      description: Durchsucht die Inhalte dieser Installation
+    resources: { cpus: "2.0", memory: 1g }
+
+  worker:
+    <<: *app-base
+    command: ["php", "artisan", "queue:work", "--tries=1", "--timeout=14400", "--sleep=3"]
+    needs:
+      postgres:
+        databases: [{ name: example }]
+      litellm: { models: [chat, embed] }
+      qdrant: {}
+      brand: {}
+      asr: {}
+      docling: {}
+    health: { exec: ["php", "artisan", "example:queue-health"] }
+    # How long a stop waits before it kills the container — cover the longest
+    # job the service runs, so an update never cuts a four-hour transcription
+    # off after docker's default ten seconds.
+    stopGracePeriod: 4h
+    resources: { cpus: "2.0", memory: 2g }
+
+  # A service that declares no needs gets nothing and reaches nothing beyond
+  # its siblings — least privilege by omission.
+  asr:
+    image: example-asr:${version}
+    envSecrets: [EXAMPLE_HF_TOKEN, EXAMPLE_ASR_TOKEN]
+    expose: [9000]
+    # startupTimeout stretches the readiness gate for a first start that
+    # legitimately takes long (downloading weights into the volume); it maps
+    # to the healthcheck's start_period and extends aictl's own wait.
+    health: { httpGet: /healthz, port: 9000, startupTimeout: 900s }
+    volumes:
+      # The service refills this itself on first start, so it stays out of
+      # `backup` — never set excludeFromBackup on anything the customer
+      # cannot get back: excluded means there is no second copy.
+      - { name: asr-models, path: /opt/models, excludeFromBackup: true }
+    # gpu: optional reserves the NVIDIA card where docker actually has the
+    # nvidia runtime and silently leaves the reservation out elsewhere (the
+    # app auto-detects CUDA vs CPU). gpu: required refuses the install on a
+    # host without one, before anything is downloaded.
+    resources: { cpus: "8.0", memory: 10g, gpu: optional }
+
+  # A third-party image (no Dockerfile in this repo) is pulled from its
+  # registry at install — pin it by digest for a reproducible pull.
+  docling:
+    image: quay.io/docling-project/docling-serve-cpu:v1.36.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    env:
+      DOCLING_SERVE_MAX_SYNC_WAIT: "840"
+    expose: [5001]
+    health: { httpGet: /health, port: 5001, startupTimeout: 300s }
+    volumes:
+      - { name: docling-models, path: /opt/app-root/src/.cache, excludeFromBackup: true }
+    resources: { cpus: "4.0", memory: 6g }
+
+# Jobs are one-off commands run in a fresh container of a service (its image,
+# env, volumes and networks — `compose run`, not exec). Each declares EITHER a
+# lifecycle `phase` OR a `cron` schedule:
+#   preStart      before the services (re)start, on EVERY converge — the
+#                 moment a schema has to be in place. Keep it idempotent.
+#   preUpdate     on a version change, run by the OUTGOING version against
+#                 its own images — the only containers that still know how to
+#                 undo what that version did. `when: upgrade|downgrade`
+#                 narrows it; omitted it runs on both directions.
+#   postRestore   after `aictl restore` has brought everything back up — the
+#                 place to rebuild state that lives outside the volumes.
+#   cron          five-field schedule (minute resolution), evaluated by the
+#                 control plane; missed windows collapse into one catch-up run.
+jobs:
+  migrate:
+    description: Bringt das Schema auf den Stand dieser Version
+    service: app
+    command: ["php", "artisan", "migrate", "--force"]
+    phase: preStart
+  rollback:
+    description: Nimmt die Migrationen zurück, bevor eine ältere Version übernimmt
+    service: app
+    command: ["php", "artisan", "migrate:rollback", "--force"]
+    phase: preUpdate
+    when: downgrade
+  reindex:
+    description: Baut die Qdrant-Collections aus der Datenbank neu auf
+    service: app
+    command: ["php", "artisan", "example:reindex"]
+    phase: postRestore
+  mailbox:
+    description: Holt Anhänge aus dem Postfach und reiht sie ein
+    service: app
+    command: ["php", "artisan", "example:fetch-mail"]
+    cron: "*/5 * * * *"
+
+# Hooks are bundle-relative scripts run ON THE HOST (not in a container), with
+# the bundle dir as cwd and an AICTL_* environment (AICTL_HOOK, _EXTENSION_NAME,
+# _EXTENSION_VERSION, _PREVIOUS_VERSION, _UPDATE_DIRECTION, _BUNDLE_DIR,
+# _DATA_DIR, _COMPOSE_FILE, _COMPOSE_PROJECT, …). Phases: preInstall/postInstall
+# (first install), preUpdate/postUpdate (version change), preUninstall (services
+# still UP)/postUninstall. Most extensions ship NONE: everything aictl can
+# converge from data is a manifest field or a job — reach for a hook only for
+# the genuinely imperative that must run on the server itself.
+hooks:
+  register:
+    description: Meldet die Installation einmalig beim Hersteller-Portal an
+    script: hooks/post-install.sh
+    phase: postInstall
+  deregister:
+    description: Meldet sie dort ab, solange die Dienste noch laufen
+    script: hooks/pre-uninstall.sh
+    phase: preUninstall
+
+# State the extension owns OUTSIDE its own volumes, declared so the platform
+# can reason about it. `purgeOn: uninstall` scopes what `extension remove
+# --purge` destroys (a plain remove keeps everything); `restoreJob` names the
+# postRestore job that rebuilds a store no backup carries. A qdrant selector
+# also decides which collections the extension's key reaches.
+state:
+  - { kind: qdrant, selector: "example_*", purgeOn: uninstall, restoreJob: reindex }
+  - { kind: database, name: example, purgeOn: uninstall }
+
+# n8n workflows import idempotently (stable top-level "id" in the JSON) and
+# publish once per version — a later manual unpublish in the n8n UI is not
+# reverted by the next reconcile. Credentials seed from the secret store
+# (values never live in the bundle): declare the referenced keys in the
+# credential's secretEnv and supply them with `aictl secret set`.
+n8n:
+  workflows:
+    - { file: n8n/example-workflow.json, publish: true }
+  # credentials:
+  #   - id: example-http
+  #     name: Example HTTP
+  #     type: httpHeaderAuth
+  #     data: { name: "Authorization", value: "Bearer ${EXAMPLE_API_TOKEN}" }
+  #     secretEnv: [EXAMPLE_API_TOKEN]

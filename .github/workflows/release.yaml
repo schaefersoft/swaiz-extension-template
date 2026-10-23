@@ -1,0 +1,17 @@
+name: release
+
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: release
+
+jobs:
+  release:
+    if: github.repository != 'schaefersoft/swaiz-extension-template'
+    uses: schaefersoft/swaiz-extension-kit/.github/workflows/extension-release.yaml@v1
+    secrets: inherit

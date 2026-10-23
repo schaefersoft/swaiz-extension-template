@@ -1,0 +1,13 @@
+name: ci
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    uses: schaefersoft/swaiz-extension-kit/.github/workflows/extension-check.yaml@v1
